@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "description": "Analyze a public website and emit Codex-friendly frontend design artifacts.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "design-checker": "./dist/cli.js"
+    "design-checker": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -15,8 +17,26 @@
   "files": [
     "dist"
   ],
+  "keywords": [
+    "design-analysis",
+    "design-system",
+    "frontend",
+    "playwright",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OnatArslan/design-checker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OnatArslan/design-checker/issues"
+  },
+  "homepage": "https://github.com/OnatArslan/design-checker#readme",
   "scripts": {
+    "clean": "node ./scripts/clean-dist.mjs",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run clean && npm run build",
+    "prepublishOnly": "npm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },

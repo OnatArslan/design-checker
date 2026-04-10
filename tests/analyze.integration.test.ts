@@ -62,11 +62,13 @@ describe("analyzeSite integration", () => {
 
       expect(bundle.pages.length).toBeGreaterThanOrEqual(3);
       expect(bundle.designSystem.colors.length).toBeGreaterThan(0);
-      expect(bundle.codexBrief).toContain("Typography centers on");
+      expect(bundle.designIntent.prompt.length).toBeGreaterThan(0);
+      expect(bundle.codexBrief.length).toBeGreaterThan(40);
       expect(existsSync(path.join(outDir, "analysis.json"))).toBe(true);
 
       const analysisFile = JSON.parse(await readFile(path.join(outDir, "analysis.json"), "utf8"));
       expect(analysisFile.schemaVersion).toBe("1.0");
+      expect(analysisFile.designIntent.prompt).toBeTypeOf("string");
 
       for (const page of bundle.pages) {
         expect(existsSync(path.join(outDir, page.screenshotPath))).toBe(true);

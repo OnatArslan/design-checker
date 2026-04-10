@@ -46,6 +46,7 @@ export type RawPageDomData = {
   title: string;
   elements: RawElementSnapshot[];
   linkCandidates: LinkCandidate[];
+  pageBaseStyles: Record<string, string>;
 };
 
 const STYLE_PROPERTIES = [
@@ -159,9 +160,15 @@ export async function collectRawPageDomData(page: Page): Promise<RawPageDomData>
       let resolved = normalized;
       if (colorContext) {
         try {
-          colorContext.fillStyle = "#000";
+          colorContext.clearRect(0, 0, 1, 1);
           colorContext.fillStyle = normalized;
-          resolved = String(colorContext.fillStyle || normalized);
+          colorContext.fillRect(0, 0, 1, 1);
+          const [red, green, blue, alpha] = colorContext.getImageData(0, 0, 1, 1).data;
+          if (alpha === 255) {
+            resolved = `rgb(${red},${green},${blue})`;
+          } else {
+            resolved = `rgba(${red},${green},${blue},${Number((alpha / 255).toFixed(2))})`;
+          }
         } catch {
           resolved = normalized;
         }
@@ -271,17 +278,79 @@ export async function collectRawPageDomData(page: Page): Promise<RawPageDomData>
         };
       });
 
+    const styleCandidates = [
+      document.body,
+      document.querySelector("main"),
+      document.documentElement
+    ].filter(Boolean) as HTMLElement[];
+
+    const pickFirstOpaqueBackground = () => {
+      for (const node of styleCandidates) {
+        const backgroundColor = canonicalizeColor(window.getComputedStyle(node).backgroundColor);
+        if (backgroundColor && backgroundColor !== "rgba(0,0,0,0)") {
+          return backgroundColor;
+        }
+      }
+
+      return "rgba(0,0,0,0)";
+    };
+
+    const bodyStyle = window.getComputedStyle(document.body);
+    const htmlStyle = window.getComputedStyle(document.documentElement);
+    const pageBaseStyles = {
+      backgroundColor: pickFirstOpaqueBackground(),
+      color: canonicalizeColor(bodyStyle.color || htmlStyle.color || ""),
+      fontFamily: bodyStyle.fontFamily || htmlStyle.fontFamily || "",
+      lineHeight: bodyStyle.lineHeight || htmlStyle.lineHeight || "",
+      fontSize: bodyStyle.fontSize || htmlStyle.fontSize || ""
+    };
+
     return {
       title: document.title || "",
       elements,
-      linkCandidates
+      linkCandidates,
+      pageBaseStyles
     };
   }, STYLE_PROPERTIES);
 }
 
+function matchesSemanticToken(value: string, pattern: RegExp): boolean {
+  const normalized = value.toLowerCase();
+  return pattern.test(normalized);
+}
+
+function hasSemanticClass(element: RawElementSnapshot, pattern: RegExp): boolean {
+  return element.classList.some((className) => matchesSemanticToken(className, pattern));
+}
+
+function hasSemanticId(element: RawElementSnapshot, pattern: RegExp): boolean {
+  return Boolean(element.id) && matchesSemanticToken(element.id, pattern);
+}
+
+function containsHeadingMarkup(element: RawElementSnapshot, level: "h1" | "h2" | "h3"): boolean {
+  return new RegExp(`<${level}[\\s>]`, "i").test(element.htmlSnippet);
+}
+
 function classifyComponent(element: RawElementSnapshot): string | null {
   const tag = element.tagName;
-  const classes = element.classList.join(" ").toLowerCase();
+  const hasNavbarSemantics =
+    hasSemanticClass(element, /(?:^|[_-])(navbar|navigation|topbar|topnav|menu)(?:[_-]|$)/) ||
+    hasSemanticId(element, /(?:^|[_-])(navbar|navigation|topnav)(?:[_-]|$)/);
+  const hasFooterSemantics =
+    hasSemanticClass(element, /(?:^|[_-])(footer)(?:[_-]|$)/) ||
+    hasSemanticId(element, /(?:^|[_-])(footer)(?:[_-]|$)/);
+  const hasHeroSemantics =
+    hasSemanticClass(element, /(?:^|[_-])(hero|masthead|banner|headline)(?:[_-]|$)/) ||
+    hasSemanticId(element, /(?:^|[_-])(hero|product|overview)(?:[_-]|$)/);
+  const hasSectionSemantics =
+    hasSemanticClass(element, /(?:^|[_-])(section|content|feature|highlight)(?:[_-]|$)/) ||
+    hasSemanticId(element, /(?:^|[_-])(section|features|how-it-works|open-source|faqs?)(?:[_-]|$)/);
+  const hasCardSemantics = hasSemanticClass(
+    element,
+    /(?:^|[_-])(card|tile|window|panel|frame|popover|modal|dialog)(?:[_-]|$)/
+  );
+  const hasH1 = containsHeadingMarkup(element, "h1");
+  const hasHeading = hasH1 || containsHeadingMarkup(element, "h2");
   const backgroundColor = normalizeColor(element.styles.backgroundColor);
   const paddingY = extractLengthPx(element.styles.paddingTop) ?? 0;
   const radius = extractLengthPx(element.styles.borderRadius) ?? 0;
@@ -295,7 +364,7 @@ function classifyComponent(element: RawElementSnapshot): string | null {
     width >= 1400 &&
     height >= 800 &&
     !element.id &&
-    !classes.includes("hero");
+    !hasHeroSemantics;
 
   if (isFullBleedShell && tag === "div") {
     return null;
@@ -308,8 +377,7 @@ function classifyComponent(element: RawElementSnapshot): string | null {
   if (
     tag === "a" &&
     (element.role === "button" ||
-      classes.includes("button") ||
-      classes.includes("btn") ||
+      hasSemanticClass(element, /(?:^|[_-])(button|btn|cta)(?:[_-]|$)/) ||
       (!!backgroundColor && backgroundColor !== "rgba(0,0,0,0)" && paddingY >= 8))
   ) {
     return "link-button";
@@ -319,20 +387,31 @@ function classifyComponent(element: RawElementSnapshot): string | null {
     return "input";
   }
 
-  if (tag === "header" || tag === "nav" || classes.includes("nav")) {
+  if (
+    tag === "header" ||
+    tag === "nav" ||
+    ((tag === "div" || tag === "section") && hasNavbarSemantics && width >= 320 && height >= 40)
+  ) {
     return "navbar";
   }
 
-  if (tag === "footer" || classes.includes("footer")) {
+  if (
+    tag === "footer" ||
+    ((tag === "div" || tag === "section") && (hasFooterSemantics || element.inFooter) && width >= 320 && height >= 80)
+  ) {
     return "footer";
   }
 
   if (
-    ["div", "section", "article"].includes(tag) &&
-    (classes.includes("hero") ||
-      tag === "section" ||
-      Boolean(element.id) ||
-      (element.textSnippet.length > 40 && width > 500 && element.boundingBox.y < 900 && width < 1400))
+    ["div", "section", "article", "main"].includes(tag) &&
+    !element.inFooter &&
+    !element.inHeader &&
+    height >= 140 &&
+    height <= 1800 &&
+    width >= 560 &&
+    (hasHeroSemantics ||
+      hasH1 ||
+      (hasHeading && element.boundingBox.y < 900 && element.textSnippet.length > 40 && width < 1400))
   ) {
     return "hero";
   }
@@ -343,7 +422,7 @@ function classifyComponent(element: RawElementSnapshot): string | null {
     width <= 760 &&
     height >= 120 &&
     height <= 640 &&
-    (classes.includes("card") ||
+    (hasCardSemantics ||
       tag === "article" ||
       tag === "li" ||
       ((radius >= 8 || shadow !== "none" || borderWidth === 1) && element.textSnippet.length > 12))
@@ -351,15 +430,24 @@ function classifyComponent(element: RawElementSnapshot): string | null {
     return "card";
   }
 
-  if (tag === "section" || tag === "article" || classes.includes("section")) {
+  if (
+    (tag === "section" || tag === "article" || hasSectionSemantics || Boolean(element.id)) &&
+    !element.inHeader &&
+    !element.inFooter &&
+    width >= 400 &&
+    height >= 120 &&
+    height <= 2200
+  ) {
     return "section";
   }
 
   if (
-    ["div", "section", "article"].includes(tag) &&
+    ["div", "section", "article", "main"].includes(tag) &&
     (extractLengthPx(element.styles.maxWidth) ?? 0) >= 720 &&
     width >= 480 &&
+    height >= 60 &&
     height <= 1800 &&
+    !element.inHeader &&
     !element.inFooter
   ) {
     return "container";
@@ -372,6 +460,8 @@ function scoreComponentCandidate(element: RawElementSnapshot, kind: string): num
   let score = 0;
   const area = element.boundingBox.width * element.boundingBox.height;
   const tag = element.tagName;
+  const hasH1 = containsHeadingMarkup(element, "h1");
+  const hasHeading = hasH1 || containsHeadingMarkup(element, "h2");
 
   if (["header", "nav", "footer", "section", "article", "button", "a"].includes(tag)) {
     score += 10;
@@ -382,11 +472,23 @@ function scoreComponentCandidate(element: RawElementSnapshot, kind: string): num
   if (kind === "hero" && tag === "section") {
     score += 12;
   }
+  if (kind === "hero" && hasH1) {
+    score += 18;
+  }
+  if (kind === "hero" && hasHeading) {
+    score += 8;
+  }
   if (kind === "navbar" && (tag === "header" || tag === "nav")) {
     score += 12;
   }
   if (kind === "footer" && tag === "footer") {
     score += 14;
+  }
+  if (kind === "navbar" && element.inHeader) {
+    score += 6;
+  }
+  if (kind === "footer" && element.inFooter) {
+    score += 6;
   }
   if (kind === "card" && tag === "article") {
     score += 8;
@@ -407,7 +509,10 @@ function scoreComponentCandidate(element: RawElementSnapshot, kind: string): num
     score -= 20;
   }
   if (element.boundingBox.height > 2400) {
-    score -= 12;
+    score -= 24;
+  }
+  if (element.boundingBox.height > 6_000) {
+    score -= 40;
   }
   if (element.boundingBox.width >= 1400 && tag === "div") {
     score -= 8;
@@ -493,7 +598,7 @@ function buildTypography(elements: RawElementSnapshot[]): TypographyToken[] {
     });
 }
 
-function buildTokens(elements: RawElementSnapshot[]): PageTokens {
+function buildTokens(rawPage: RawPageDomData): PageTokens {
   const colorUsage = new Map<string, Set<string>>();
   const colorCounts = new Map<string, number>();
   const backgroundCounts = new Map<string, number>();
@@ -501,7 +606,7 @@ function buildTokens(elements: RawElementSnapshot[]): PageTokens {
   const radiusCounts = new Map<string, number>();
   const shadowCounts = new Map<string, number>();
 
-  for (const element of elements) {
+  for (const element of rawPage.elements) {
     const color = normalizeColor(element.styles.color);
     const background = normalizeColor(element.styles.backgroundColor);
     const border = normalizeColor(element.styles.borderColor);
@@ -549,6 +654,24 @@ function buildTokens(elements: RawElementSnapshot[]): PageTokens {
     }
   }
 
+  const pageBackground = normalizeColor(rawPage.pageBaseStyles.backgroundColor);
+  const pageColor = normalizeColor(rawPage.pageBaseStyles.color);
+
+  if (pageBackground) {
+    incrementCount(colorCounts, pageBackground, 6);
+    incrementCount(backgroundCounts, pageBackground, 6);
+    const usages = colorUsage.get(pageBackground) ?? new Set<string>();
+    usages.add("background");
+    colorUsage.set(pageBackground, usages);
+  }
+
+  if (pageColor) {
+    incrementCount(colorCounts, pageColor, 4);
+    const usages = colorUsage.get(pageColor) ?? new Set<string>();
+    usages.add("text");
+    colorUsage.set(pageColor, usages);
+  }
+
   const colors = sortColorsForNarrative(
     [...colorCounts.entries()].map(([value, count]) => ({
       value,
@@ -559,7 +682,7 @@ function buildTokens(elements: RawElementSnapshot[]): PageTokens {
 
   return {
     colors,
-    typography: buildTypography(elements),
+    typography: buildTypography(rawPage.elements),
     spacingScale: mapToSortedCountedValues(spacingCounts, 8),
     radii: mapToSortedCountedValues(radiusCounts, 6),
     shadows: mapToSortedCountedValues(shadowCounts, 6),
@@ -614,11 +737,20 @@ function buildLayout(elements: RawElementSnapshot[]): PageLayout {
   };
 }
 
-function buildPageSummary(title: string, tokens: PageTokens, layout: PageLayout, components: ComponentExample[]): string {
-  const primaryColors = sortColorsForNarrative(tokens.colors)
-    .slice(0, 3)
-    .map((token) => token.value)
-    .join(", ") || "muted neutrals";
+function buildPageSummary(
+  title: string,
+  tokens: PageTokens,
+  layout: PageLayout,
+  components: ComponentExample[]
+): string {
+  const narrativeColors = uniqueBy(
+    [
+      ...tokens.backgrounds.slice(0, 2),
+      ...sortColorsForNarrative(tokens.colors).slice(0, 4)
+    ],
+    (token) => token.value
+  );
+  const primaryColors = narrativeColors.slice(0, 3).map((token) => token.value).join(", ") || "muted neutrals";
   const typeLead = tokens.typography[0]
     ? `${tokens.typography[0].family} at ${tokens.typography[0].size}`
     : "default sans typography";
@@ -637,7 +769,7 @@ function buildPageSummary(title: string, tokens: PageTokens, layout: PageLayout,
 }
 
 export function processRawPageData(rawPage: RawPageDomData): PageProcessResult {
-  const tokens = buildTokens(rawPage.elements);
+  const tokens = buildTokens(rawPage);
   const components = buildComponentExamples(rawPage.elements);
   const layout = buildLayout(rawPage.elements);
   const pageSummary = buildPageSummary(rawPage.title, tokens, layout, components);

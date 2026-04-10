@@ -2,6 +2,13 @@ type StyleShape = Record<string, string | undefined>;
 const PX_LENGTH_RE = /^(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)px$/i;
 const HEX_COLOR_RE = /^#([\da-f]{3,8})$/i;
 
+type ParsedColor = {
+  red: number;
+  green: number;
+  blue: number;
+  alpha: number;
+};
+
 function normalizeWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -125,6 +132,86 @@ export function normalizeColor(value: string | undefined): string | null {
   }
 
   return normalized;
+}
+
+export function parseColor(value: string | undefined): ParsedColor | null {
+  const normalized = normalizeColor(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^rgba?\((.+)\)$/);
+  if (!match) {
+    return null;
+  }
+
+  const parts = match[1]
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length < 3) {
+    return null;
+  }
+
+  const red = Number.parseFloat(parts[0]);
+  const green = Number.parseFloat(parts[1]);
+  const blue = Number.parseFloat(parts[2]);
+  const alpha = parts[3] === undefined ? 1 : Number.parseFloat(parts[3]);
+
+  if ([red, green, blue, alpha].some((entry) => Number.isNaN(entry))) {
+    return null;
+  }
+
+  return { red, green, blue, alpha };
+}
+
+export function getColorBrightness(value: string | undefined): number | null {
+  const color = parseColor(value);
+  if (!color) {
+    return null;
+  }
+
+  return color.red * 0.299 + color.green * 0.587 + color.blue * 0.114;
+}
+
+export function isDarkColor(value: string | undefined): boolean {
+  const brightness = getColorBrightness(value);
+  return brightness !== null && brightness < 90;
+}
+
+export function isLightColor(value: string | undefined): boolean {
+  const brightness = getColorBrightness(value);
+  return brightness !== null && brightness >= 200;
+}
+
+export function hasTransparency(value: string | undefined): boolean {
+  const color = parseColor(value);
+  return Boolean(color && color.alpha < 1);
+}
+
+export function isNeutralColor(value: string | undefined): boolean {
+  const color = parseColor(value);
+  if (!color) {
+    return false;
+  }
+
+  const max = Math.max(color.red, color.green, color.blue);
+  const min = Math.min(color.red, color.green, color.blue);
+  return max - min <= 18;
+}
+
+export function isAccentColor(value: string | undefined): boolean {
+  const color = parseColor(value);
+  if (!color) {
+    return false;
+  }
+
+  const max = Math.max(color.red, color.green, color.blue);
+  const min = Math.min(color.red, color.green, color.blue);
+  const brightness = getColorBrightness(value);
+
+  return max - min >= 36 && brightness !== null && brightness > 35 && brightness < 235;
 }
 
 export function normalizeFontFamily(value: string | undefined): string {

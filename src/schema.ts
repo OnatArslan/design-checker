@@ -100,12 +100,30 @@ export const pageDesignSnapshotSchema = z.object({
 
 export const designSystemSchema = z.object({
   colors: z.array(countedValueSchema).default([]),
+  backgrounds: z.array(countedValueSchema).default([]),
   typography: z.array(typographyTokenSchema).default([]),
   spacingScale: z.array(countedValueSchema).default([]),
   radii: z.array(countedValueSchema).default([]),
   shadows: z.array(countedValueSchema).default([]),
   layoutPatterns: z.array(layoutPatternSchema).default([]),
   fontAssets: z.array(fontAssetSchema).default([])
+});
+
+export const designIntentColorRoleSchema = z.object({
+  role: z.string(),
+  value: z.string(),
+  description: z.string()
+});
+
+export const designIntentSchema = z.object({
+  visualStyle: z.array(z.string()).default([]),
+  colorRoles: z.array(designIntentColorRoleSchema).default([]),
+  typography: z.array(z.string()).default([]),
+  spacing: z.array(z.string()).default([]),
+  shape: z.array(z.string()).default([]),
+  layout: z.array(z.string()).default([]),
+  componentPatterns: z.array(z.string()).default([]),
+  prompt: z.string()
 });
 
 export const analysisErrorSchema = z.object({
@@ -134,6 +152,7 @@ export const designAnalysisBundleSchema = z.object({
   viewport: viewportSchema,
   codexBrief: z.string(),
   designSystem: designSystemSchema,
+  designIntent: designIntentSchema,
   pages: z.array(pageDesignSnapshotSchema),
   errors: z.array(analysisErrorSchema)
 });
@@ -152,6 +171,8 @@ export type PageLayout = z.infer<typeof pageLayoutSchema>;
 export type PageTokens = z.infer<typeof pageTokensSchema>;
 export type PageDesignSnapshot = z.infer<typeof pageDesignSnapshotSchema>;
 export type DesignSystem = z.infer<typeof designSystemSchema>;
+export type DesignIntentColorRole = z.infer<typeof designIntentColorRoleSchema>;
+export type DesignIntent = z.infer<typeof designIntentSchema>;
 export type AnalysisError = z.infer<typeof analysisErrorSchema>;
 export type AnalyzeOptions = z.infer<typeof analyzeOptionsSchema>;
 export type DesignAnalysisBundle = z.infer<typeof designAnalysisBundleSchema>;

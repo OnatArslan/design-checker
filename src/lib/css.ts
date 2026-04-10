@@ -29,6 +29,9 @@ const GENERIC_CLASS_NAMES = new Set([
   "sticky"
 ]);
 
+const GENERIC_IDS = new Set(["root", "__next", "app"]);
+const LOW_SIGNAL_SELECTORS = new Set(["#root", ".hide-scrollbars", ".hide-scrollbars::-webkit-scrollbar"]);
+
 const UTILITY_PREFIX_RE =
   /^(?:[mp][trblxy]?|[wh]|min-w|min-h|max-w|max-h|gap|space-[xy]|text|font|leading|tracking|rounded|border|bg|object|overflow|items|justify|content|self|place|top|right|bottom|left|z|col|row|flex|grid|inline|block|hidden|sticky|absolute|relative|fixed|shrink|grow|basis)(?:[-:[#/.\d]|$)/;
 const VARIANT_PREFIX_RE =
@@ -96,7 +99,10 @@ function buildComponentTokens(component: ComponentExample): SelectorToken[] {
   if (component.selectorHint.includes("#")) {
     const ids = component.selectorHint.match(/#([A-Za-z0-9_-]+)/g) ?? [];
     ids.forEach((idSelector) => {
-      tokens.set(idSelector, 30);
+      const idValue = idSelector.slice(1).toLowerCase();
+      if (!GENERIC_IDS.has(idValue)) {
+        tokens.set(idSelector, 30);
+      }
     });
   }
 
@@ -117,6 +123,15 @@ function selectorMatchScore(selector: string, tokens: SelectorToken[]): number {
   }
 
   return score;
+}
+
+function isLowSignalMatchedRule(selector: string): boolean {
+  if (LOW_SIGNAL_SELECTORS.has(selector)) {
+    return true;
+  }
+
+  const trimmed = selector.trim();
+  return trimmed === ":root" || trimmed === "html" || trimmed === "body";
 }
 
 function summarizeDeclarations(input: string[]): CssDeclaration[] {
@@ -190,7 +205,7 @@ export function summarizeCssSource(
 
       const selector = rule.selector.trim();
       const score = selector ? selectorMatchScore(selector, selectorTokens) : 0;
-      if (selector && score > 0) {
+      if (selector && score > 0 && !isLowSignalMatchedRule(selector)) {
         matchedRuleCandidates.push({
           selector,
           declarations: summarizeDeclarations(declarations),
@@ -209,7 +224,7 @@ export function summarizeCssSource(
 
         const selector = rule.selector.trim();
         const score = selector ? selectorMatchScore(selector, selectorTokens) : 0;
-        if (selector && score > 0) {
+        if (selector && score > 0 && !isLowSignalMatchedRule(selector)) {
           matchedRuleCandidates.push({
             selector,
             declarations: summarizeDeclarations(declarations),
